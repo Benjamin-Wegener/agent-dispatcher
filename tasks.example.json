@@ -1,0 +1,17 @@
+{
+  "parser-errors": {
+    "needs": [],
+    "files": ["src/parser/*", "tests/parser/*"],
+    "brief": "The parser accepts trailing commas silently. Report them as errors with line and column, add tests for every case."
+  },
+  "cli-json-output": {
+    "needs": [],
+    "files": ["src/cli/*", "tests/cli/*", "docs/cli.md"],
+    "brief": "Add --json to every CLI command. Same data as the text output, documented in docs/cli.md, tested."
+  },
+  "parser-speed": {
+    "needs": ["parser-errors"],
+    "files": ["src/parser/*", "bench/*"],
+    "brief": "Make the parser at least 2x faster on bench/large.txt without changing behaviour. Measure before and after, put the numbers in the commit message."
+  }
+}

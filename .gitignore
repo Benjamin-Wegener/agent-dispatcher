@@ -1,0 +1,9 @@
+config.json
+tasks.json
+state.json
+state.tmp
+.lock
+.merge
+STOP
+dispatcher-log.md
+__pycache__/

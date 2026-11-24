@@ -1,0 +1,22 @@
+{
+  "repo": "../my-project",
+  "main": "main",
+  "worktrees": "..",
+  "state_dir": ".",
+  "log": "dispatcher-log.md",
+  "tasks": "tasks.json",
+  "max_agents": 12,
+  "lease_seconds": 1800,
+  "wait_seconds": 90,
+  "max_rejections": 4,
+  "test_timeout": 1200,
+  "env": {},
+  "tests": [
+    {"run": "make test", "cwd": "."},
+    {"run": "sh run_tests.sh", "cwd": "tests/integration", "optional": true}
+  ],
+  "rules": [
+    "Start every test program with a time limit.",
+    "No pushes, no pull requests: local commits only."
+  ]
+}
