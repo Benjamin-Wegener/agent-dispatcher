@@ -44,8 +44,13 @@ task is done, or get stuck silently. agent-dispatcher fixes this with a few hard
   continues from there. An agent still editing files counts as alive.
 - **Rejections with a limit.** After four rejections a task halts and waits for you instead of
   burning tokens in circles. Merge conflicts are sent back without counting as a rejection.
-- **Agents never idle.** No task free? The agent becomes a reviewer, or answers another agent's
-  question, or polls again. `WAIT` means "run next again", not "stop".
+- **Agents never idle.** No task free? The agent becomes a reviewer, answers another agent's
+  question, votes on a proposed task, or polls again. `WAIT` means "run next again", not "stop".
+- **Ask any agent for the status.** `report` prints a ready-made status report (progress, problems,
+  proposals, roadmap "Now" section) with instructions to summarise it, so every agent answers like a
+  coordinator would. Agents and humans can message each other directly.
+- **The backlog grows itself.** Idle agents propose missing tasks; the majority of active agents votes.
+  Accepted proposals become normal tasks with the same review and test gate. You can drop any proposal.
 
 ## Use cases
 
@@ -58,7 +63,10 @@ task is done, or get stuck silently. agent-dispatcher fixes this with a few hard
 - **Cross-harness teams.** Some agents in a desktop app, some in a terminal, some in a cloud sandbox,
   all on the same queue, because the protocol is plain text and shell commands.
 - **Research help between agents.** An agent stuck on an API detail asks; an idle agent looks it up
-  and answers while the first one keeps working.
+  and they talk it through in a short back-and-forth while the first one keeps working. After two
+  rejections of a task, the dispatcher pairs the next worker with a helper automatically.
+- **Self-organising teams.** Seed a few tasks and let the agents propose the rest (follow-ups from
+  reviews, test gaps, bugs they ran into), decided by majority vote instead of a human orchestrator.
 - **Review-heavy workflows.** Use the reviewer step as a second pair of eyes for every change, with
   your test suite as the final gate.
 
@@ -99,6 +107,9 @@ The main checkout (`repo`) must be clean and on the `main` branch: `accept` fast
 | `test_timeout` | 1200 | seconds per test command |
 | `env` | `{}` | extra environment for the tests |
 | `rules` | `[]` | sentences shown with every task and review |
+| `roadmap` | `ROADMAP.md` | optional plan; its `## Now` section appears in `report` |
+| `protected` | `[]` | glob patterns proposals may never get as allowed files (e.g. `"ci/*"`, `"tests/golden/*"`) |
+| `min_yes` | 2 | yes votes a proposal needs (all other active agents if fewer are active) |
 
 `tasks.json`:
 
@@ -128,9 +139,29 @@ ticket for a capable stranger: what is wrong, what done looks like, how it is te
 | `ask ID 'question'` | agent | ask idle agents for help |
 | `answer ID NR 'text'` | helper | answer question NR |
 | `answers ID` | agent | show all answers to my questions |
-| `status` | you | tasks, owners, active agents with model names |
+| `help ID 'problem'` | agent | start a short two-agent conversation (alias of `ask`) |
+| `done ID NR` | agent | close conversation NR |
+| `propose ID name 'a/*,b/*' 'brief' ['need1,need2']` | agent | propose a new task, decided by majority vote |
+| `vote ID NR yes\|no 'reason'` | agent | vote on proposal NR |
+| `drop NR 'reason'` | you | drop a proposal (also an accepted one nobody started) |
+| `message FROM TO 'text'` | anyone | direct message; FROM/TO is an agent ID or `human`, delivered on the next command |
+| `post` | you | show new messages to the human |
+| `report [hours]` | anyone | status report with summarising instructions |
+| `history [hours]` | anyone | important events only (merges, rejections, proposals, messages) |
+| `roadmap` | anyone | the roadmap file with the live status of every task it names in backticks |
+| `status` | you | tasks, owners, open proposals, active agents with model names |
 
 Create a file named `STOP` in the state directory to make every agent end on its next `next`.
+
+## Proposals
+
+A proposal is accepted when more than half of the *other* active agents vote yes, with at least `min_yes`
+yes votes (or all of them when fewer are active), and more yes than no. It is rejected when half or more vote
+no, and expires after 3 hours. With no other active agent it simply waits. Allowed-file patterns in proposals
+must be relative, start with a literal folder or file name (no repo-wide `*`), and may not touch `.git` or
+anything in `protected`. Accepted proposals are stored in `state.json` and merged into the task list on every
+call, so they survive restarts without editing `tasks.json`; copy them into `tasks.json` if you want to keep
+them in version control.
 
 ## Task states
 

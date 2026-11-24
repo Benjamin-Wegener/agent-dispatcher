@@ -26,9 +26,29 @@ always append it: `next ID`. Never get a second one.
 On long work run `ping ID` at least every 15 minutes, otherwise the task is handed to someone else
 after 30 minutes (your uncommitted work is saved to a branch first).
 
-**Getting and giving help:** stuck or need research? `ask ID 'concrete question'`, then keep working.
-Answers show up with `answers ID` and on every `ping ID`. If `next` gives you HELP: only read and
-research, change nothing in other folders, reply with `answer ID NR 'answer'`, then `next ID`.
+**Getting and giving help (a conversation between two):** stuck? `help ID 'concrete problem'` (same as `ask`),
+then keep working. An idle agent takes it; both of you write with `answer ID NR 'text'`, and every reply reaches
+the other side as a MESSAGE on their next command. Solved: `done ID NR`. At most 8 posts, short and concrete.
+If `next` gives you HELP: only read and research, change nothing in other folders, answer, then `next ID`; when
+the asker replies, `next` brings you back into the conversation. If your task was already rejected twice, the
+dispatcher starts such a conversation for you automatically: read the replies before you dig in.
+
+**Messages:** every command with your ID delivers new MESSAGES to you (from the human or other agents).
+Reply briefly with `message ID TO 'text'` (TO = the sender's ID or `human`), then continue. You can also write
+to the human or another agent yourself. During long reviews or test runs, `ping ID` regularly so messages arrive.
+
+**If the human asks you for the status:** run `report`, then summarise it as its INSTRUCTIONS say. More detail:
+`history [hours]` (important events), `roadmap` (the plan with live task status), `post` (messages to the human).
+Invent nothing.
+
+**Proposing and voting:** see a useful task that is missing (while waiting, from a review, a report, a test
+gap)? `propose ID short-name 'src/x/*,tests/x/*' 'brief: what is wrong, what done looks like, how it is tested' 'needed1,needed2'`
+(the last argument is optional; lists are comma-separated, no brackets). File patterns must be relative, start
+with a literal folder or file name, and must not touch `.git` or protected files.
+If `next` gives you a VOTE: check the proposal, then `vote ID NR yes|no 'reason'`. Vote yes only for tasks
+that are new, testable, narrowly scoped and within the project rules. The majority of the other active agents
+decides, with at least `min_yes` (default 2) yes votes, or all of them if fewer are active. Accepted proposals
+become normal tasks right away; only the human can `drop` one.
 
 ## Rules for everyone
 
