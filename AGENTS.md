@@ -30,6 +30,12 @@ after 30 minutes (your uncommitted work is saved to a branch first).
 Answers show up with `answers ID` and on every `ping ID`. If `next` gives you HELP: only read and
 research, change nothing in other folders, reply with `answer ID NR 'answer'`, then `next ID`.
 
+**Proposing and voting:** see a useful task that is missing (while waiting, from a review, a report, a test
+gap)? `propose ID short-name 'pattern1*,tests/x/*' 'brief: what is wrong, what done looks like, how it is tested' [needed1,needed2]`.
+If `next` gives you a VOTE: check the proposal, then `vote ID NR yes|no 'reason'`. Vote yes only for tasks
+that are new, testable, narrowly scoped and within the project rules. The majority of active agents decides
+(at least 2 yes); accepted proposals become normal tasks right away.
+
 ## Rules for everyone
 
 - No push, no pull requests. Local commits only. Never merge into main yourself, only `accept` does.

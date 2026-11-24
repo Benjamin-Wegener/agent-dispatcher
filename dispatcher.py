@@ -9,7 +9,7 @@ Every agent, whatever harness or model it runs in, only gets one instruction:
 Local only: it never pushes. Merges happen only through `accept`, after the
 configured tests pass on the merged tree.
 """
-import contextlib, fcntl, fnmatch, json, os, secrets, signal, subprocess, sys, tempfile, time
+import contextlib, fcntl, fnmatch, json, os, re, secrets, signal, subprocess, sys, tempfile, time
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -88,6 +88,7 @@ def state():
         fcntl.flock(lock, fcntl.LOCK_EX)
         p = C['state_dir'] / 'state.json'
         s = json.loads(p.read_text()) if p.exists() else {'agents': {}, 'tasks': {}}
+        update_proposals(s)
         for k in TASKS:
             s['tasks'].setdefault(k, dict(status='open', attempt=0, rejected=0))
         for k, t in s['tasks'].items():
@@ -265,14 +266,21 @@ def next_(who=None):
                       "Research or look it up (read only, change nothing in other folders, no merge), then answer briefly and concretely: "
                       f"{CMD} answer {who} {q['nr']} 'answer'. Then: next {who}")
                 return
-            if all(t['status'] in ('done', 'halt') for t in s['tasks'].values()):
-                print('END: nothing left to hand out')
+            v = assign_vote(s, who)
+            if v:
+                print(f"ID {who}\nVOTE {v['nr']}: proposal from {v['from']} ({name_of(s, v['from'])})\n"
+                      f"NAME {v['name']}\nNEEDS {', '.join(v['needs']) or '-'}\nALLOWED FILES {', '.join(v['files'])}\nBRIEF {v['brief']}\n"
+                      f"{VOTE_RULE}\nThen: {CMD} vote {who} {v['nr']} yes|no 'short reason'. Then: next {who}")
+                return
+            if all(t['status'] in ('done', 'halt') for t in s['tasks'].values()) and not any(
+                    p['status'] == 'voting' for p in s.get('proposals', [])):
+                print(f'ID {who}\nEND: nothing left to hand out. {PROPOSE_HINT}')
                 return
         if not told:
             told = True
             print(f'Nothing free for {who} right now. Looking for up to {WAIT} s, this is not a hang.', flush=True)
         if time.time() >= end:
-            print(f'ID {who}\nWAIT: run again right away: next {who}')
+            print(f'ID {who}\n{PROPOSE_HINT}\nWAIT: run again right away: next {who}')
             return
         time.sleep(5)
 
@@ -469,12 +477,113 @@ def set_name(who, *model):
     print(f'ok, {who} = {model}. Continue with: next {who}')
 
 
+PROPOSE_HINT = ("PROPOSE: if you see a useful task that is missing (from a review, a report, a test gap), propose it: "
+                f"{CMD} propose ID short-name 'path/pattern*,tests/x/*' 'brief: what is wrong, what done looks like, how it is tested' "
+                "[needed-task,...]. The majority of active agents decides.")
+VOTE_RULE = ("Vote YES only if the task is not already covered, is clearly testable, has narrow and fitting allowed files, "
+             "fits one session, and follows the project rules. Otherwise NO with a reason.")
+LOCKED_PATTERNS = ('*', '**', '.git*')
+PROPOSAL_TTL = 3 * 3600
+
+
+def update_proposals(s):
+    """Decide open proposals by majority and turn accepted ones into tasks."""
+    active = [w for w, x in s['agents'].items() if time.time() - x < LEASE]
+    for p in s.get('proposals', []):
+        if p['status'] == 'voting':
+            voters = max(len([w for w in active if w != p['from']]), 2)
+            yes, no = len(p['yes']), len(p['no'])
+            if p['name'] in TASKS:
+                p.update(status='rejected', reason='name taken meanwhile')
+            elif yes >= 2 and yes * 2 > voters and yes > no:
+                p['status'] = 'accepted'
+                log(f"PROPOSAL {p['nr']} {p['name']} ACCEPTED ({yes} yes, {no} no)")
+            elif no * 2 >= voters or time.time() - p['time'] > PROPOSAL_TTL:
+                p['status'] = 'rejected'
+                log(f"PROPOSAL {p['nr']} {p['name']} rejected ({yes} yes, {no} no)")
+        if p['status'] == 'accepted' and p['name'] not in TASKS:
+            TASKS[p['name']] = dict(needs=list(p['needs']), files=list(p['files']),
+                                    brief=p['brief'] + f" (Proposal {p['nr']} by {p['from']}, accepted by majority.)")
+
+
+def assign_vote(s, who):
+    for p in s.get('proposals', []):
+        if p['status'] == 'voting' and p['from'] != who and who not in p['yes'] + p['no']:
+            return p
+
+
+def propose(who, name='', files='', brief='', needs=''):
+    name, brief = name.strip().lower(), brief.strip()[:4000]
+    files = [f.strip() for f in files.split(',') if f.strip()]
+    needs = [n.strip() for n in needs.split(',') if n.strip()]
+    if not re.fullmatch(r'[a-z0-9][a-z0-9-]{2,40}', name) or not files or len(brief) < 40:
+        raise Error("usage: propose ID short-name 'pattern1,pattern2' 'brief (40+ characters)' [needed1,needed2]")
+    bad = [f for f in files if f in LOCKED_PATTERNS or f.startswith('/') or '..' in f]
+    if bad:
+        raise Error('file patterns not allowed: ' + ', '.join(bad))
+    with state() as s:
+        if who not in s['agents']:
+            raise Error(f'unknown ID {who}')
+        heartbeat(s, who)
+        ps = s.setdefault('proposals', [])
+        if name in TASKS or any(p['name'] == name and p['status'] == 'voting' for p in ps):
+            raise Error(f'{name} already exists')
+        missing = [n for n in needs if n not in TASKS]
+        if missing:
+            raise Error('unknown needed task: ' + ', '.join(missing))
+        if sum(p['status'] == 'voting' and p['from'] == who for p in ps) >= 2:
+            raise Error('you already have 2 open proposals, wait for the votes')
+        nr = max((p['nr'] for p in ps), default=0) + 1
+        ps.append(dict(nr=nr, **{'from': who}, name=name, needs=needs, files=files, brief=brief,
+                       time=time.time(), yes=[], no=[], reasons=[], status='voting'))
+    log(f'{who} proposes ({nr}): {name} [{", ".join(files)}] {brief[:120]}')
+    print(f'Proposal {nr} posted. Idle agents will vote. Continue with: next {who}')
+
+
+def vote(who, nr, choice='', *reason):
+    choice, reason = choice.strip().lower(), ' '.join(reason).strip()[:1000]
+    if choice not in ('yes', 'no') or not reason:
+        raise Error("usage: vote ID NR yes|no 'short reason'")
+    with state() as s:
+        heartbeat(s, who)
+        p = next((p for p in s.get('proposals', []) if str(p['nr']) == str(nr)), None)
+        if not p or p['status'] != 'voting':
+            raise Error(f'no open proposal {nr}')
+        if p['from'] == who or who in p['yes'] + p['no']:
+            raise Error('own proposal or already voted')
+        p[choice].append(who)
+        p['reasons'].append(dict(by=who, vote=choice, text=reason))
+        update_proposals(s)
+        result = p['status']
+    log(f'{who} votes {choice} on proposal {nr}: {reason[:120]}')
+    print(f'ok ({result}). Continue with: next {who}')
+
+
+def drop(nr, *reason):
+    """For humans: drop a proposal, also an accepted one nobody has started yet."""
+    with state() as s:
+        p = next((p for p in s.get('proposals', []) if str(p['nr']) == str(nr)), None)
+        if not p:
+            raise Error(f'no proposal {nr}')
+        t = s['tasks'].get(p['name'])
+        if t and t['status'] != 'open':
+            raise Error(f"{p['name']} is already {t['status']}")
+        p['status'] = 'dropped'
+        s['tasks'].pop(p['name'], None)
+        TASKS.pop(p['name'], None)
+    log(f"PROPOSAL {nr} dropped: {' '.join(reason)}")
+    print('ok')
+
+
 def status():
     with state() as s:
         names = s.get('names', {})
         for k, t in s['tasks'].items():
             w = t.get('who', '-')
             print(f"{k:24} {t['status']:7} {w} {names.get(w, '') if w != '-' else ''}")
+        for p in s.get('proposals', []):
+            if p['status'] in ('voting', 'accepted'):
+                print(f"proposal {p['nr']:<3} {p['name']:24} {p['status']:8} {len(p['yes'])} yes / {len(p['no'])} no, by {p['from']} {names.get(p['from'], '')}")
         print('active agents:')
         for w, x in s['agents'].items():
             if time.time() - x < LEASE:
@@ -482,7 +591,8 @@ def status():
 
 
 COMMANDS = dict(next=next_, submit=submit, reject=reject, accept=accept, ping=ping, status=status,
-                name=set_name, ask=ask, answer=answer, answers=read_answers)
+                name=set_name, ask=ask, answer=answer, answers=read_answers,
+                propose=propose, vote=vote, drop=drop)
 
 if __name__ == '__main__':
     try:

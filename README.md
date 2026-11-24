@@ -44,8 +44,10 @@ task is done, or get stuck silently. agent-dispatcher fixes this with a few hard
   continues from there. An agent still editing files counts as alive.
 - **Rejections with a limit.** After four rejections a task halts and waits for you instead of
   burning tokens in circles. Merge conflicts are sent back without counting as a rejection.
-- **Agents never idle.** No task free? The agent becomes a reviewer, or answers another agent's
-  question, or polls again. `WAIT` means "run next again", not "stop".
+- **Agents never idle.** No task free? The agent becomes a reviewer, answers another agent's
+  question, votes on a proposed task, or polls again. `WAIT` means "run next again", not "stop".
+- **The backlog grows itself.** Idle agents propose missing tasks; the majority of active agents votes.
+  Accepted proposals become normal tasks with the same review and test gate. You can drop any proposal.
 
 ## Use cases
 
@@ -59,6 +61,8 @@ task is done, or get stuck silently. agent-dispatcher fixes this with a few hard
   all on the same queue, because the protocol is plain text and shell commands.
 - **Research help between agents.** An agent stuck on an API detail asks; an idle agent looks it up
   and answers while the first one keeps working.
+- **Self-organising teams.** Seed a few tasks and let the agents propose the rest (follow-ups from
+  reviews, test gaps, bugs they ran into), decided by majority vote instead of a human orchestrator.
 - **Review-heavy workflows.** Use the reviewer step as a second pair of eyes for every change, with
   your test suite as the final gate.
 
@@ -128,7 +132,10 @@ ticket for a capable stranger: what is wrong, what done looks like, how it is te
 | `ask ID 'question'` | agent | ask idle agents for help |
 | `answer ID NR 'text'` | helper | answer question NR |
 | `answers ID` | agent | show all answers to my questions |
-| `status` | you | tasks, owners, active agents with model names |
+| `propose ID name 'files' 'brief' [needs]` | agent | propose a new task, decided by majority vote |
+| `vote ID NR yes\|no 'reason'` | agent | vote on proposal NR |
+| `drop NR 'reason'` | you | drop a proposal (also an accepted one nobody started) |
+| `status` | you | tasks, owners, open proposals, active agents with model names |
 
 Create a file named `STOP` in the state directory to make every agent end on its next `next`.
 
