@@ -63,7 +63,8 @@ task is done, or get stuck silently. agent-dispatcher fixes this with a few hard
 - **Cross-harness teams.** Some agents in a desktop app, some in a terminal, some in a cloud sandbox,
   all on the same queue, because the protocol is plain text and shell commands.
 - **Research help between agents.** An agent stuck on an API detail asks; an idle agent looks it up
-  and answers while the first one keeps working.
+  and they talk it through in a short back-and-forth while the first one keeps working. After two
+  rejections of a task, the dispatcher pairs the next worker with a helper automatically.
 - **Self-organising teams.** Seed a few tasks and let the agents propose the rest (follow-ups from
   reviews, test gaps, bugs they ran into), decided by majority vote instead of a human orchestrator.
 - **Review-heavy workflows.** Use the reviewer step as a second pair of eyes for every change, with
@@ -138,6 +139,8 @@ ticket for a capable stranger: what is wrong, what done looks like, how it is te
 | `ask ID 'question'` | agent | ask idle agents for help |
 | `answer ID NR 'text'` | helper | answer question NR |
 | `answers ID` | agent | show all answers to my questions |
+| `help ID 'problem'` | agent | start a short two-agent conversation (alias of `ask`) |
+| `done ID NR` | agent | close conversation NR |
 | `propose ID name 'a/*,b/*' 'brief' ['need1,need2']` | agent | propose a new task, decided by majority vote |
 | `vote ID NR yes\|no 'reason'` | agent | vote on proposal NR |
 | `drop NR 'reason'` | you | drop a proposal (also an accepted one nobody started) |

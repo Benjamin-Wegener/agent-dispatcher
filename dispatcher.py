@@ -218,6 +218,15 @@ def assign(s, who):
             git('worktree', 'add', w, '-b', b, t.get('commit') or MAIN)
             t.update(status='work', who=who, attempt=n, dir=str(w))
             log(f'{who} ({name_of(s, who)}) works on {k} in {w.name}')
+            if t.get('rejected', 0) >= 2:
+                qs = s.setdefault('questions', [])
+                nr = max((q['nr'] for q in qs), default=0) + 1
+                qs.append(dict(nr=nr, **{'from': who}, time=time.time(), answers=[], text=(
+                    f"Automatic: task {k} was rejected {t['rejected']} times, {who} now makes attempt {n}. "
+                    f"Last rejection: {t.get('reason', '?')[:1500]} -- Please talk this through with {who} briefly: what exactly "
+                    f"is missing, what is the smallest way to get it accepted, which trap (e.g. a test that passes for the wrong "
+                    f"reason) to avoid? Folder: {w}")))
+                log(f'conversation {nr} started automatically for {k} (attempt {n})')
             return k, t
 
 
@@ -265,9 +274,7 @@ def next_(who=None):
                 return
             q = assign_help(s, who)
             if q:
-                print(f"ID {who}\nHELP {q['nr']} from {q['from']} ({name_of(s, q['from'])}):\n{q['text']}\n"
-                      "Research or look it up (read only, change nothing in other folders, no merge), then answer briefly and concretely: "
-                      f"{CMD} answer {who} {q['nr']} 'answer'. Then: next {who}")
+                show_help(s, who, q)
                 return
             v = assign_vote(s, who)
             if v:
@@ -415,14 +422,47 @@ def ping(who):
     read_answers(who, only_new=True)
 
 
+TALK_MAX = 8
+
+
 def assign_help(s, who):
-    for q in s.get('questions', []):
-        open_ = not q['answers'] and q['from'] != who
+    qs = s.get('questions', [])
+    # 1. I am already helping and the asker wrote last: stay in the conversation
+    for q in qs:
+        if q.get('by') == who and not q.get('closed') and q['answers'] and q['answers'][-1]['by'] == q['from']:
+            q['since'] = time.time()
+            return q
+    # 2. A new question, or one whose helper went quiet
+    for q in qs:
+        if q.get('closed') or q['from'] == who:
+            continue
         free = not q.get('by') or time.time() - q.get('since', 0) > LEASE
-        if open_ and free:
+        if (not q['answers'] or q.get('by')) and free:
             q.update(by=who, since=time.time())
             log(f"{who} helps with question {q['nr']}")
             return q
+
+
+def show_help(s, who, q):
+    print(f"ID {who}\nHELP {q['nr']} from {q['from']} ({name_of(s, q['from'])}):\n{q['text']}")
+    for a in q['answers'][-6:]:
+        print(f"  {a['by']} ({name_of(s, a['by'])}): {a['text'][:1500]}")
+    print("A short conversation between two agents to get things moving: look it up (read only, change nothing in other "
+          f"folders, no merge), then answer concretely: {CMD} answer {who} {q['nr']} 'answer'. If the asker replies, "
+          f"next {who} brings you back here. Solved: done {who} {q['nr']}. At most {TALK_MAX} posts. Then: next {who}")
+
+
+def post_to_talk(s, q, sender, text):
+    """Store a post and deliver it to the other side as a message."""
+    to = q.get('by') if sender == q['from'] else q['from']
+    # delivered as a message below, so it does not show up a second time in 'answers'
+    q['answers'].append(dict(by=sender, text=text, time=time.time(), read=bool(to and to != sender)))
+    if to and to != sender:
+        ms = s.setdefault('messages', [])
+        nr = max((m['nr'] for m in ms), default=0) + 1
+        ms.append(dict(nr=nr, **{'from': sender}, to=to, text=f"[conversation {q['nr']}] {text}", time=time.time(), read=False))
+    if len(q['answers']) >= TALK_MAX:
+        q['closed'] = True
 
 
 def ask(who, *text):
@@ -447,9 +487,27 @@ def answer(who, nr, *text):
         q = next((q for q in s.get('questions', []) if str(q['nr']) == str(nr)), None)
         if not q:
             raise Error(f'no question {nr}')
-        q['answers'].append(dict(by=who, text=text, time=time.time()))
-        q['by'] = None
-    log(f'{who} answers question {nr}')
+        if q.get('closed'):
+            raise Error(f'conversation {nr} is closed; ask a new question')
+        if who != q['from']:
+            q.update(by=who, since=time.time())
+        post_to_talk(s, q, who, text)
+        asker = q['from']
+    log(f'{who} writes in conversation {nr}: {text[:120]}')
+    if who == asker:
+        print(f'ok, your helper gets it. Keep working; the reply arrives with your next command. Solved: done {who} {nr}')
+    else:
+        print(f'ok. The asker may reply; next {who} brings you back. Continue with: next {who}')
+
+
+def done_talk(who, nr):
+    with state() as s:
+        heartbeat(s, who)
+        q = next((q for q in s.get('questions', []) if str(q['nr']) == str(nr)), None)
+        if not q or who not in (q['from'], q.get('by')):
+            raise Error(f'conversation {nr} is not yours')
+        q['closed'] = True
+    log(f'conversation {nr} closed by {who}')
     print(f'ok. Continue with: next {who}')
 
 
@@ -755,7 +813,7 @@ def status():
 COMMANDS = dict(next=next_, submit=submit, reject=reject, accept=accept, ping=ping, status=status,
                 name=set_name, ask=ask, answer=answer, answers=read_answers,
                 propose=propose, vote=vote, drop=drop,
-                message=message, post=post, report=report, history=history, roadmap=roadmap)
+                message=message, post=post, done=done_talk, help=ask, report=report, history=history, roadmap=roadmap)
 
 if __name__ == '__main__':
     cmd = sys.argv[1] if len(sys.argv) > 1 else 'next'

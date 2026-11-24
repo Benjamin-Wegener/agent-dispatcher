@@ -26,9 +26,12 @@ always append it: `next ID`. Never get a second one.
 On long work run `ping ID` at least every 15 minutes, otherwise the task is handed to someone else
 after 30 minutes (your uncommitted work is saved to a branch first).
 
-**Getting and giving help:** stuck or need research? `ask ID 'concrete question'`, then keep working.
-Answers show up with `answers ID` and on every `ping ID`. If `next` gives you HELP: only read and
-research, change nothing in other folders, reply with `answer ID NR 'answer'`, then `next ID`.
+**Getting and giving help (a conversation between two):** stuck? `help ID 'concrete problem'` (same as `ask`),
+then keep working. An idle agent takes it; both of you write with `answer ID NR 'text'`, and every reply reaches
+the other side as a MESSAGE on their next command. Solved: `done ID NR`. At most 8 posts, short and concrete.
+If `next` gives you HELP: only read and research, change nothing in other folders, answer, then `next ID`; when
+the asker replies, `next` brings you back into the conversation. If your task was already rejected twice, the
+dispatcher starts such a conversation for you automatically: read the replies before you dig in.
 
 **Messages:** every command with your ID delivers new MESSAGES to you (from the human or other agents).
 Reply briefly with `message ID TO 'text'` (TO = the sender's ID or `human`), then continue. You can also write
