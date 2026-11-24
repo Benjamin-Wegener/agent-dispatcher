@@ -30,6 +30,14 @@ after 30 minutes (your uncommitted work is saved to a branch first).
 Answers show up with `answers ID` and on every `ping ID`. If `next` gives you HELP: only read and
 research, change nothing in other folders, reply with `answer ID NR 'answer'`, then `next ID`.
 
+**Messages:** every command with your ID delivers new MESSAGES to you (from the human or other agents).
+Reply briefly with `message ID TO 'text'` (TO = the sender's ID or `human`), then continue. You can also write
+to the human or another agent yourself. During long reviews or test runs, `ping ID` regularly so messages arrive.
+
+**If the human asks you for the status:** run `report`, then summarise it as its INSTRUCTIONS say. More detail:
+`history [hours]` (important events), `roadmap` (the plan with live task status), `post` (messages to the human).
+Invent nothing.
+
 **Proposing and voting:** see a useful task that is missing (while waiting, from a review, a report, a test
 gap)? `propose ID short-name 'pattern1*,tests/x/*' 'brief: what is wrong, what done looks like, how it is tested' [needed1,needed2]`.
 If `next` gives you a VOTE: check the proposal, then `vote ID NR yes|no 'reason'`. Vote yes only for tasks

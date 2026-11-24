@@ -46,6 +46,9 @@ task is done, or get stuck silently. agent-dispatcher fixes this with a few hard
   burning tokens in circles. Merge conflicts are sent back without counting as a rejection.
 - **Agents never idle.** No task free? The agent becomes a reviewer, answers another agent's
   question, votes on a proposed task, or polls again. `WAIT` means "run next again", not "stop".
+- **Ask any agent for the status.** `report` prints a ready-made status report (progress, problems,
+  proposals, roadmap "Now" section) with instructions to summarise it, so every agent answers like a
+  coordinator would. Agents and humans can message each other directly.
 - **The backlog grows itself.** Idle agents propose missing tasks; the majority of active agents votes.
   Accepted proposals become normal tasks with the same review and test gate. You can drop any proposal.
 
@@ -103,6 +106,7 @@ The main checkout (`repo`) must be clean and on the `main` branch: `accept` fast
 | `test_timeout` | 1200 | seconds per test command |
 | `env` | `{}` | extra environment for the tests |
 | `rules` | `[]` | sentences shown with every task and review |
+| `roadmap` | `ROADMAP.md` | optional plan; its `## Now` section appears in `report` |
 
 `tasks.json`:
 
@@ -135,6 +139,11 @@ ticket for a capable stranger: what is wrong, what done looks like, how it is te
 | `propose ID name 'files' 'brief' [needs]` | agent | propose a new task, decided by majority vote |
 | `vote ID NR yes\|no 'reason'` | agent | vote on proposal NR |
 | `drop NR 'reason'` | you | drop a proposal (also an accepted one nobody started) |
+| `message FROM TO 'text'` | anyone | direct message; FROM/TO is an agent ID or `human`, delivered on the next command |
+| `post` | you | show new messages to the human |
+| `report [hours]` | anyone | status report with summarising instructions |
+| `history [hours]` | anyone | important events only (merges, rejections, proposals, messages) |
+| `roadmap` | anyone | the roadmap file with the live status of every task it names in backticks |
 | `status` | you | tasks, owners, open proposals, active agents with model names |
 
 Create a file named `STOP` in the state directory to make every agent end on its next `next`.

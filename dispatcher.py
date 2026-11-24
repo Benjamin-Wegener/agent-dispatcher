@@ -26,6 +26,7 @@ def load_config():
     c['state_dir'] = (base / os.path.expanduser(c.get('state_dir', '.'))).resolve()
     c['log'] = (base / os.path.expanduser(c.get('log', 'dispatcher-log.md'))).resolve()
     c['tasks'] = (base / os.path.expanduser(c.get('tasks', 'tasks.json'))).resolve()
+    c['roadmap'] = (base / os.path.expanduser(c.get('roadmap', 'ROADMAP.md'))).resolve()
     c.setdefault('main', 'main')
     c.setdefault('lease_seconds', 1800)
     c.setdefault('wait_seconds', 90)
@@ -575,6 +576,142 @@ def drop(nr, *reason):
     print('ok')
 
 
+QUIET = ('post', 'message', 'drop', 'status', 'report', 'history', 'roadmap')
+
+
+def message(sender, to, *text):
+    """Direct message. sender/to: an agent ID or 'human'. Delivered on the recipient's next command."""
+    text = ' '.join(text).strip()[:4000]
+    if not text:
+        raise Error("usage: message FROM TO 'text'  (TO = an agent ID or human)")
+    with state() as s:
+        for w in (sender, to):
+            if w != 'human' and w not in s['agents']:
+                raise Error(f'unknown ID {w}')
+        if sender != 'human':
+            heartbeat(s, sender)
+        ms = s.setdefault('messages', [])
+        nr = max((m['nr'] for m in ms), default=0) + 1
+        ms.append(dict(nr=nr, **{'from': sender}, to=to, text=text, time=time.time(), read=False))
+    log(f'MESSAGE {nr} {sender} -> {to}: {text[:150]}')
+    print(f'Message {nr} to {to} stored, delivered on their next command.')
+
+
+def post(who='human', everything=''):
+    """Show messages to who (default: new ones to the human)."""
+    with state() as s:
+        for m in s.get('messages', []):
+            if m['to'] == who and (everything or not m['read']):
+                print(f"MESSAGE {m['nr']} from {m['from']} ({name_of(s, m['from'])}) "
+                      f"{time.strftime('%H:%M', time.localtime(m['time']))}:\n{m['text']}")
+                m['read'] = True
+
+
+def deliver(who):
+    try:
+        with state() as s:
+            new = [m for m in s.get('messages', []) if m['to'] == who and not m['read']]
+            for m in new:
+                m['read'] = True
+    except Exception:
+        return
+    for m in new:
+        print(f"\nMESSAGE {m['nr']} from {m['from']}:\n{m['text']}\n"
+              f"Reply: {CMD} message {who} {m['from']} 'reply'. Then continue your work.")
+
+
+def _log_lines(hours):
+    limit = time.time() - float(hours) * 3600
+    if not C['log'].exists():
+        return
+    for line in C['log'].read_text(errors='replace').splitlines():
+        m = re.match(r'- (\d{4}-\d\d-\d\d \d\d:\d\d:\d\d) (.*)', line)
+        if m:
+            with contextlib.suppress(ValueError):
+                if time.mktime(time.strptime(m[1], '%Y-%m-%d %H:%M:%S')) >= limit:
+                    yield m[1][11:16], m[2]
+
+
+IMPORTANT = ('MERGED', 'REJECTED', 'CONFLICT', 'PROPOSAL', 'MESSAGE', 'NEW ')
+
+
+def history(hours='3'):
+    """Important events of the last hours, without routine lines."""
+    for hhmm, text in _log_lines(hours):
+        if text.startswith(IMPORTANT) or ' proposes ' in text:
+            print(f'{hhmm} {text[:220]}')
+
+
+def report(hours='3'):
+    """A ready-made status report for the human."""
+    labels = dict(work='in progress', review='in review', ready='waiting for review')
+    with state() as s:
+        names = s.get('names', {})
+        tasks = s['tasks']
+        count = {}
+        for t in tasks.values():
+            count[t['status']] = count.get(t['status'], 0) + 1
+        active = [w for w, x in s['agents'].items() if time.time() - x < LEASE]
+        running = [(k, t) for k, t in tasks.items() if t['status'] in labels]
+        halted = [k for k, t in tasks.items() if t['status'] == 'halt']
+        waiting = [k for k, t in tasks.items() if t['status'] == 'open']
+        voting = [p for p in s.get('proposals', []) if p['status'] == 'voting']
+        inbox = sum(m['to'] == 'human' and not m['read'] for m in s.get('messages', []))
+    merged, rejected, decided = [], {}, []
+    for hhmm, text in _log_lines(hours):
+        w = text.split()
+        if w[0] == 'MERGED' and len(w) > 2:
+            merged.append(f"{w[2].rstrip(',')} ({hhmm})")
+        elif w[0] == 'REJECTED' and len(w) > 2:
+            rejected[w[2].rstrip(':')] = rejected.get(w[2].rstrip(':'), 0) + 1
+        elif w[0] == 'PROPOSAL' and len(w) > 3:
+            decided.append(f'{w[2]} {w[3].lower()}')
+    print(f'STATUS REPORT (last {hours} h), {time.strftime("%Y-%m-%d %H:%M")}')
+    print(f"Tasks: {len(tasks)} total, {count.get('done', 0)} done, {count.get('work', 0)} in progress, "
+          f"{count.get('review', 0) + count.get('ready', 0)} in or waiting for review, {count.get('open', 0)} open, "
+          f"{count.get('halt', 0)} halted. Active agents: {len(active)} ({', '.join(sorted(set(names.get(w, w) for w in active)))})")
+    if running:
+        print('Running now:')
+        for k, t in running:
+            by = f" by {names.get(t.get('who'), t.get('who', ''))}" if t['status'] != 'ready' else ''
+            attempt = f", attempt {t['attempt']}" if t.get('attempt', 0) > 1 else ''
+            print(f"  {k}: {labels[t['status']]}{by}{attempt}")
+    if waiting:
+        print('Open (free or waiting for needs): ' + ', '.join(waiting))
+    if merged:
+        print('Merged: ' + ', '.join(merged))
+    if rejected:
+        print('Rejected: ' + ', '.join(f'{k} ({n}x)' for k, n in rejected.items()))
+    if decided or voting:
+        print('Proposals: ' + '; '.join(decided + [f"{p['name']} voting ({len(p['yes'])} yes/{len(p['no'])} no)" for p in voting]))
+    if halted:
+        print('Halted (needs a human): ' + ', '.join(halted))
+    if inbox:
+        print(f'{inbox} new message(s) to the human: post')
+    if C['roadmap'].exists():
+        now = re.search(r'## Now\n(.*?)(\n## |\Z)', C['roadmap'].read_text(), re.S)
+        if now:
+            print('Roadmap, next up:\n' + now[1].strip())
+    print('\nINSTRUCTIONS: summarise this for the human briefly, in their language: bullet points, most important first '
+          '(progress, problems, what happens next), task names in `code`, no agent IDs, invent nothing. '
+          'Details: history [hours], roadmap, post.')
+
+
+def roadmap():
+    """Print the roadmap file with the live status of every task it names in backticks."""
+    if not C['roadmap'].exists():
+        raise Error(f"no roadmap at {C['roadmap']} (set \"roadmap\" in config.json)")
+    with state() as s:
+        tasks = s['tasks']
+    text = C['roadmap'].read_text()
+    print(text)
+    named = [n for n in dict.fromkeys(re.findall(r'`([A-Za-z0-9_.-]+)`', text)) if n in tasks]
+    if named:
+        print('Status of the tasks named above:')
+        for n in named:
+            print(f"  {n}: {tasks[n]['status']}")
+
+
 def status():
     with state() as s:
         names = s.get('names', {})
@@ -584,6 +721,9 @@ def status():
         for p in s.get('proposals', []):
             if p['status'] in ('voting', 'accepted'):
                 print(f"proposal {p['nr']:<3} {p['name']:24} {p['status']:8} {len(p['yes'])} yes / {len(p['no'])} no, by {p['from']} {names.get(p['from'], '')}")
+        inbox = sum(m['to'] == 'human' and not m['read'] for m in s.get('messages', []))
+        if inbox:
+            print(f'{inbox} new message(s) to you: post')
         print('active agents:')
         for w, x in s['agents'].items():
             if time.time() - x < LEASE:
@@ -592,10 +732,17 @@ def status():
 
 COMMANDS = dict(next=next_, submit=submit, reject=reject, accept=accept, ping=ping, status=status,
                 name=set_name, ask=ask, answer=answer, answers=read_answers,
-                propose=propose, vote=vote, drop=drop)
+                propose=propose, vote=vote, drop=drop,
+                message=message, post=post, report=report, history=history, roadmap=roadmap)
 
 if __name__ == '__main__':
+    cmd = sys.argv[1] if len(sys.argv) > 1 else 'next'
+    failed = False
     try:
-        COMMANDS[sys.argv[1] if len(sys.argv) > 1 else 'next'](*sys.argv[2:])
+        COMMANDS[cmd](*sys.argv[2:])
     except (Error, KeyError, TypeError) as e:
-        sys.exit(f'ERROR: {e}')
+        print(f'ERROR: {e}', file=sys.stderr)
+        failed = True
+    if len(sys.argv) > 2 and cmd not in QUIET:
+        deliver(sys.argv[2])
+    sys.exit(1 if failed else 0)
