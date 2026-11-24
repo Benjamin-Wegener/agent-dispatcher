@@ -107,6 +107,8 @@ The main checkout (`repo`) must be clean and on the `main` branch: `accept` fast
 | `env` | `{}` | extra environment for the tests |
 | `rules` | `[]` | sentences shown with every task and review |
 | `roadmap` | `ROADMAP.md` | optional plan; its `## Now` section appears in `report` |
+| `protected` | `[]` | glob patterns proposals may never get as allowed files (e.g. `"ci/*"`, `"tests/golden/*"`) |
+| `min_yes` | 2 | yes votes a proposal needs (all other active agents if fewer are active) |
 
 `tasks.json`:
 
@@ -136,7 +138,7 @@ ticket for a capable stranger: what is wrong, what done looks like, how it is te
 | `ask ID 'question'` | agent | ask idle agents for help |
 | `answer ID NR 'text'` | helper | answer question NR |
 | `answers ID` | agent | show all answers to my questions |
-| `propose ID name 'files' 'brief' [needs]` | agent | propose a new task, decided by majority vote |
+| `propose ID name 'a/*,b/*' 'brief' ['need1,need2']` | agent | propose a new task, decided by majority vote |
 | `vote ID NR yes\|no 'reason'` | agent | vote on proposal NR |
 | `drop NR 'reason'` | you | drop a proposal (also an accepted one nobody started) |
 | `message FROM TO 'text'` | anyone | direct message; FROM/TO is an agent ID or `human`, delivered on the next command |
@@ -147,6 +149,16 @@ ticket for a capable stranger: what is wrong, what done looks like, how it is te
 | `status` | you | tasks, owners, open proposals, active agents with model names |
 
 Create a file named `STOP` in the state directory to make every agent end on its next `next`.
+
+## Proposals
+
+A proposal is accepted when more than half of the *other* active agents vote yes, with at least `min_yes`
+yes votes (or all of them when fewer are active), and more yes than no. It is rejected when half or more vote
+no, and expires after 3 hours. With no other active agent it simply waits. Allowed-file patterns in proposals
+must be relative, start with a literal folder or file name (no repo-wide `*`), and may not touch `.git` or
+anything in `protected`. Accepted proposals are stored in `state.json` and merged into the task list on every
+call, so they survive restarts without editing `tasks.json`; copy them into `tasks.json` if you want to keep
+them in version control.
 
 ## Task states
 

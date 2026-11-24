@@ -36,6 +36,8 @@ def load_config():
     c.setdefault('tests', [])
     c.setdefault('env', {})
     c.setdefault('rules', [])
+    c.setdefault('protected', [])
+    c.setdefault('min_yes', 2)
     c.setdefault('command', f'python3 -I {HERE / "dispatcher.py"}')
     return c
 
@@ -483,7 +485,24 @@ PROPOSE_HINT = ("PROPOSE: if you see a useful task that is missing (from a revie
                 "[needed-task,...]. The majority of active agents decides.")
 VOTE_RULE = ("Vote YES only if the task is not already covered, is clearly testable, has narrow and fitting allowed files, "
              "fits one session, and follows the project rules. Otherwise NO with a reason.")
-LOCKED_PATTERNS = ('*', '**', '.git*')
+WILDCARD = re.compile(r'[*?\[]')
+
+
+def bad_pattern(f):
+    """Why an allowed-files pattern from a proposal is refused, or None if it is fine."""
+    if f.startswith(('/', '~')) or '\\' in f or ':' in f:
+        return 'must be a relative path inside the repo'
+    parts = f.split('/')
+    if any(x in ('', '.', '..') for x in parts):
+        return 'no empty, . or .. path segments'
+    if any(x.startswith('.git') for x in parts):
+        return 'git metadata is off limits'
+    if WILDCARD.search(parts[0]):
+        return 'must start with a literal folder or file name (no repo-wide wildcards)'
+    for prot in C['protected']:
+        if fnmatch.fnmatch(f, prot) or fnmatch.fnmatch(prot, f):
+            return f'touches protected files ({prot})'
+    return None
 PROPOSAL_TTL = 3 * 3600
 
 
@@ -492,14 +511,17 @@ def update_proposals(s):
     active = [w for w, x in s['agents'].items() if time.time() - x < LEASE]
     for p in s.get('proposals', []):
         if p['status'] == 'voting':
-            voters = max(len([w for w in active if w != p['from']]), 2)
+            # voters: the other active agents. With fewer of them than min_yes, all of them must agree;
+            # with none, the proposal waits for another agent (or expires).
+            voters = len([w for w in active if w != p['from']])
+            needed = max(1, min(C['min_yes'], voters))
             yes, no = len(p['yes']), len(p['no'])
             if p['name'] in TASKS:
                 p.update(status='rejected', reason='name taken meanwhile')
-            elif yes >= 2 and yes * 2 > voters and yes > no:
+            elif voters and yes >= needed and yes * 2 > voters and yes > no:
                 p['status'] = 'accepted'
                 log(f"PROPOSAL {p['nr']} {p['name']} ACCEPTED ({yes} yes, {no} no)")
-            elif no * 2 >= voters or time.time() - p['time'] > PROPOSAL_TTL:
+            elif (voters and no * 2 >= voters) or time.time() - p['time'] > PROPOSAL_TTL:
                 p['status'] = 'rejected'
                 log(f"PROPOSAL {p['nr']} {p['name']} rejected ({yes} yes, {no} no)")
         if p['status'] == 'accepted' and p['name'] not in TASKS:
@@ -519,9 +541,9 @@ def propose(who, name='', files='', brief='', needs=''):
     needs = [n.strip() for n in needs.split(',') if n.strip()]
     if not re.fullmatch(r'[a-z0-9][a-z0-9-]{2,40}', name) or not files or len(brief) < 40:
         raise Error("usage: propose ID short-name 'pattern1,pattern2' 'brief (40+ characters)' [needed1,needed2]")
-    bad = [f for f in files if f in LOCKED_PATTERNS or f.startswith('/') or '..' in f]
+    bad = [f'{f} ({why})' for f in files if (why := bad_pattern(f))]
     if bad:
-        raise Error('file patterns not allowed: ' + ', '.join(bad))
+        raise Error('file patterns not allowed: ' + '; '.join(bad))
     with state() as s:
         if who not in s['agents']:
             raise Error(f'unknown ID {who}')

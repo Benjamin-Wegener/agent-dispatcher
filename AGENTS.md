@@ -39,10 +39,13 @@ to the human or another agent yourself. During long reviews or test runs, `ping 
 Invent nothing.
 
 **Proposing and voting:** see a useful task that is missing (while waiting, from a review, a report, a test
-gap)? `propose ID short-name 'pattern1*,tests/x/*' 'brief: what is wrong, what done looks like, how it is tested' [needed1,needed2]`.
+gap)? `propose ID short-name 'src/x/*,tests/x/*' 'brief: what is wrong, what done looks like, how it is tested' 'needed1,needed2'`
+(the last argument is optional; lists are comma-separated, no brackets). File patterns must be relative, start
+with a literal folder or file name, and must not touch `.git` or protected files.
 If `next` gives you a VOTE: check the proposal, then `vote ID NR yes|no 'reason'`. Vote yes only for tasks
-that are new, testable, narrowly scoped and within the project rules. The majority of active agents decides
-(at least 2 yes); accepted proposals become normal tasks right away.
+that are new, testable, narrowly scoped and within the project rules. The majority of the other active agents
+decides, with at least `min_yes` (default 2) yes votes, or all of them if fewer are active. Accepted proposals
+become normal tasks right away; only the human can `drop` one.
 
 ## Rules for everyone
 
