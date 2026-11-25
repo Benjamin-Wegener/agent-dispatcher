@@ -49,6 +49,9 @@ task is done, or get stuck silently. agent-dispatcher fixes this with a few hard
 - **Ask any agent for the status.** `report` prints a ready-made status report (progress, problems,
   proposals, roadmap "Now" section) with instructions to summarise it, so every agent answers like a
   coordinator would. Agents and humans can message each other directly.
+- **A council before the third try.** After two rejections a task is not handed to a lone worker again. Up to three
+  agents first discuss it, in words only (no code): each writes its own analysis, then they read each other and agree on one
+  plan. The next worker gets that plan, reviewers hold the submission against it.
 - **The backlog grows itself.** Idle agents propose missing tasks; the majority of active agents votes.
   Accepted proposals become normal tasks with the same review and test gate. You can drop any proposal.
 
@@ -110,6 +113,8 @@ The main checkout (`repo`) must be clean and on the `main` branch: `accept` fast
 | `roadmap` | `ROADMAP.md` | optional plan; its `## Now` section appears in `report` |
 | `protected` | `[]` | glob patterns proposals may never get as allowed files (e.g. `"ci/*"`, `"tests/golden/*"`) |
 | `min_yes` | 2 | yes votes a proposal needs (all other active agents if fewer are active) |
+| `council_after` | 2 | rejections after which a council meets before the next attempt (`0` turns councils off) |
+| `council_size` | 3 | seats in a council (fewer if fewer agents are active) |
 
 `tasks.json`:
 
@@ -141,6 +146,7 @@ ticket for a capable stranger: what is wrong, what done looks like, how it is te
 | `answers ID` | agent | show all answers to my questions |
 | `help ID 'problem'` | agent | start a short two-agent conversation (alias of `ask`) |
 | `done ID NR` | agent | close conversation NR |
+| `council ID 'text'` | agent | post to your council seat (round 1: own analysis, round 2: final position and plan) |
 | `propose ID name 'a/*,b/*' 'brief' ['need1,need2']` | agent | propose a new task, decided by majority vote |
 | `vote ID NR yes\|no 'reason'` | agent | vote on proposal NR |
 | `drop NR 'reason'` | you | drop a proposal (also an accepted one nobody started) |
@@ -162,6 +168,23 @@ must be relative, start with a literal folder or file name (no repo-wide `*`), a
 anything in `protected`. Accepted proposals are stored in `state.json` and merged into the task list on every
 call, so they survive restarts without editing `tasks.json`; copy them into `tasks.json` if you want to keep
 them in version control.
+
+## Councils
+
+When a task has been rejected `council_after` times, `next` opens a council instead of handing it to a worker. Agents that
+would otherwise get the task take a seat (up to `council_size`, never more than the active agents). A council is advice
+only: no worktree, no code, no commit.
+
+1. **Round 1, alone.** Each member reads the brief, the rejection reasons and the last rejected diff, and writes the cause with
+   evidence, the smallest way that really meets the brief, the traps a reviewer will find, and the proof (a test that fails
+   before and passes after).
+2. **Round 2, together.** Each member sees the other posts and writes a final position with one shared plan, ending in
+   `AGREE: <id>` or `OWN PLAN`.
+
+The result is stored as the task's plan (and as `council-TASK.md` next to the log). The next worker sees it with the task,
+reviewers see it with the review and reject a submission that departs from it. If that attempt is rejected as well, the plan
+moves to `plan_old` and a new council meets, now also asking why the old plan did not work. A member silent for a lease loses
+the seat; after 20 minutes two members are enough; after two hours the council closes with what it has.
 
 ## Task states
 

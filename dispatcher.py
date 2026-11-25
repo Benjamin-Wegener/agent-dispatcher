@@ -38,6 +38,8 @@ def load_config():
     c.setdefault('rules', [])
     c.setdefault('protected', [])
     c.setdefault('min_yes', 2)
+    c.setdefault('council_after', 2)
+    c.setdefault('council_size', 3)
     c.setdefault('command', f'python3 -I {HERE / "dispatcher.py"}')
     return c
 
@@ -101,6 +103,7 @@ def state():
                 if t['status'] == 'work':
                     hand_over(k, t)
                 t['status'] = 'open' if t['status'] == 'work' else 'ready'
+        update_councils(s)
         yield s
         tmp = C['state_dir'] / 'state.tmp'
         tmp.write_text(json.dumps(s, indent=1))
@@ -212,13 +215,14 @@ def assign(s, who):
             log(f'{who} ({name_of(s, who)}) reviews {k}')
             return k, t
     for k, t in tasks.items():
-        if t['status'] == 'open' and k in TASKS and all(tasks.get(d, {}).get('status') == 'done' for d in TASKS[k]['needs']):
+        if t['status'] == 'open' and k in TASKS and all(tasks.get(d, {}).get('status') == 'done' for d in TASKS[k]['needs']) \
+                and not council_needed(s, k, t):
             n = t['attempt'] + 1
             w, b = C['worktrees'] / f'wt-task-{k}-{n}', f'task-{k}-{n}'
             git('worktree', 'add', w, '-b', b, t.get('commit') or MAIN)
             t.update(status='work', who=who, attempt=n, dir=str(w))
             log(f'{who} ({name_of(s, who)}) works on {k} in {w.name}')
-            if t.get('rejected', 0) >= 2:
+            if t.get('rejected', 0) >= 2 and not t.get('plan'):
                 qs = s.setdefault('questions', [])
                 nr = max((q['nr'] for q in qs), default=0) + 1
                 qs.append(dict(nr=nr, **{'from': who}, time=time.time(), answers=[], text=(
@@ -238,6 +242,8 @@ def show(who, k, t):
         if t.get('reason'):
             print('LAST REJECTED: ' + t['reason'])
             print(f'On a conflict: git merge {MAIN} in FOLDER and resolve it there.')
+        if t.get('plan'):
+            print(t['plan'] + '\nStick to this plan; justify every departure in the commit message.')
         if rules:
             print('RULES ' + rules)
         print(f'THEN commit, then: {CMD} submit {who}')
@@ -245,6 +251,8 @@ def show(who, k, t):
         print(f"REVIEW {k}\nFOLDER {t['review_dir']}\nDIFF git diff {MAIN}...{t['commit']}\nBRIEF WAS {TASKS[k]['brief']}")
         if rules:
             print('RULES ' + rules)
+        if t.get('plan'):
+            print('COUNCIL PLAN of this task (measure the diff against it):\n' + t['plan'])
         print('Read the whole diff. Reject stubs, fake successes, special cases and anything left undone.')
         print(f"THEN {CMD} accept {who}  OR  {CMD} reject {who} 'reason'")
 
@@ -268,6 +276,10 @@ def next_(who=None):
             if who not in s.get('names', {}) and not told:
                 print(f"NAME: report your model name once (what you are called or who trained you, e.g. 'Claude Opus 5.5' or 'GPT-5'): "
                       f"{CMD} name {who} 'model name'. Your ID stays {who}.", flush=True)
+            cm = None if any(t.get('who') == who and t['status'] in ('work', 'review') for t in s['tasks'].values()) else assign_council(s, who)
+            if cm:
+                show_council(s, who, *cm)
+                return
             m = assign(s, who)
             if m:
                 show(who, *m)
@@ -318,6 +330,9 @@ def submit(who):
 
 def send_back(t, reason):
     t['rejected'] += 1
+    if t.get('plan'):
+        t['plan_old'] = t.pop('plan')
+        t.pop('council', None)
     t.update(status='halt' if t['rejected'] >= C['max_rejections'] else 'open', reason=reason)
 
 
@@ -422,7 +437,151 @@ def ping(who):
     read_answers(who, only_new=True)
 
 
+COUNCIL_JOIN = 20 * 60
+COUNCIL_ROUND2 = 40 * 60
+COUNCIL_MAX = 2 * 3600
 TALK_MAX = 8
+
+
+def active_count(s):
+    return sum(time.time() - x < LEASE for x in s['agents'].values())
+
+
+def council_needed(s, k, t):
+    after = C['council_after']
+    if not after or t.get('plan') or t.get('rejected', 0) < after:
+        return False
+    return t.get('council') is not None or active_count(s) >= 2
+
+
+def _notify(s, sender, to, text):
+    ms = s.setdefault('messages', [])
+    nr = max((m['nr'] for m in ms), default=0) + 1
+    ms.append(dict(nr=nr, **{'from': sender}, to=to, text=text, time=time.time(), read=False))
+
+
+def _rejection_reasons(k):
+    try:
+        lines = [x.strip() for x in C['log'].read_text().splitlines() if 'REJECTED' in x and f' {k}: ' in x]
+    except OSError:
+        lines = []
+    return [re.sub(r'^- \d{4}-\d\d-\d\d \d\d:\d\d:\d\d ', '', x)[:600] for x in lines[-4:]]
+
+
+def council_close(s, k, t):
+    c = t['council']
+    nm = s.get('names', {})
+    rnd = 2 if any(b['round'] == 2 for b in c['posts']) else 1
+    posts = [b for b in c['posts'] if b['round'] == rnd]
+    if posts:
+        plan = (f'COUNCIL RESULT ({len(posts)} agents, round {rnd}). What the posts agree on is binding. On a conflict take the '
+                'way most of them AGREE with, otherwise the smallest one. Reviewers: if the submission departs from the plan or lacks a '
+                'proof it names (a test that fails before and passes after, a change at the named place), reject it.\n')
+        plan += '\n'.join(f"--- {nm.get(b['who'], '?')} ({b['who']}):\n{b['text']}" for b in posts)
+    else:
+        plan = 'COUNCIL without posts: nobody took part. Work normally and read the rejection reasons carefully.'
+    t['plan'] = plan[:9000]
+    c['done'] = True
+    (C['log'].parent / f'council-{k}.md').write_text(f'# Council {k}\n\n{plan}\n')
+    log(f'COUNCIL {k} done ({len(posts)} posts, round {rnd}), plan in council-{k}.md next to the log')
+    _notify(s, 'council', 'human', f'Council on {k} finished ({len(posts)} posts): council-{k}.md next to the log')
+
+
+def update_councils(s):
+    now = time.time()
+    for k, t in s['tasks'].items():
+        c = t.get('council')
+        if not c or c['done']:
+            continue
+
+        def posted(r):
+            return {b['who'] for b in c['posts'] if b['round'] == r}
+        for w in list(c['members']):
+            if now - s['agents'].get(w, 0) > LEASE and w not in posted(c['round']):
+                c['members'].remove(w)
+        if not c['members'] and not c['posts']:
+            t.pop('council')
+            continue
+        if now - c['start'] > COUNCIL_MAX or (now - c['start'] > COUNCIL_JOIN and len(c['members']) < 2 and c['round'] == 1):
+            council_close(s, k, t)
+            continue
+        full = len(c['members']) >= c['size'] or (now - c['start'] > COUNCIL_JOIN and len(c['members']) >= 2)
+        if c['round'] == 1 and full and posted(1) >= set(c['members']):
+            c['round'] = 2
+            c['r2'] = now
+            for w in c['members']:
+                _notify(s, 'council', w, f'COUNCIL {k}: round 2 is open, the other posts are in. Continue with: next {w}')
+            log(f'COUNCIL {k} round 2')
+        elif c['round'] == 2 and (posted(2) >= set(c['members']) or now - c.get('r2', now) > COUNCIL_ROUND2):
+            council_close(s, k, t)
+
+
+def assign_council(s, who):
+    tasks = s['tasks']
+    for k, t in tasks.items():
+        c = t.get('council')
+        if c and not c['done'] and who in c['members'] and not any(b['who'] == who and b['round'] == c['round'] for b in c['posts']):
+            return k, t
+    for k, t in sorted(tasks.items()):
+        if t['status'] == 'open' and k in TASKS and all(tasks.get(d, {}).get('status') == 'done' for d in TASKS[k]['needs']) \
+                and council_needed(s, k, t):
+            c = t.get('council')
+            if c is None:
+                c = t['council'] = dict(start=time.time(), members=[], round=1, posts=[], done=False,
+                                        size=min(C['council_size'], max(2, active_count(s))))
+                log(f"COUNCIL {k} opened ({t.get('rejected', 0)} rejections, {c['size']} seats)")
+            if c['round'] == 1 and who not in c['members'] and len(c['members']) < c['size']:
+                c['members'].append(who)
+                log(f'{who} ({name_of(s, who)}) joins council {k}')
+                return k, t
+    return None
+
+
+def show_council(s, who, k, t):
+    c = t['council']
+    r = c['round']
+    nm = s.get('names', {})
+    print(f'ID {who}')
+    print(f"COUNCIL {k}: round {r} of 2, members {len(c['members'])}/{c['size']}")
+    print('RULES: advice only. Do NOT write code, create no folder or branch, commit nothing. Read (source, diffs, reports, public '
+          'documentation), think, write. The other members are other agents; you see their posts in round 2.')
+    print(f"TASK {k}\nBRIEF {TASKS[k]['brief']}\nALLOWED FILES {', '.join(TASKS[k]['files'])}")
+    if t.get('commit'):
+        print(f"LAST REJECTED STATE: git -C {REPO} diff {MAIN}...{t['commit']}")
+    for g in _rejection_reasons(k):
+        print('REJECTED: ' + g)
+    if t.get('plan_old'):
+        print('PREVIOUS COUNCIL PLAN (it was followed and the submission still failed; ask yourself why):\n' + t['plan_old'][:3000])
+    if r == 1:
+        print('ROUND 1 (alone, without seeing the others): write 1) the cause of the failed attempts, concrete, with evidence '
+              '(file/function/rejection reason); 2) the SMALLEST way that really meets the brief, in numbered steps with files; '
+              '3) traps the reviewer will find otherwise; 4) the proof (a test that fails before and passes after).')
+    else:
+        print('ROUND 2: the posts of the others from round 1:')
+        for b in c['posts']:
+            if b['round'] == 1 and b['who'] != who:
+                print(f"--- {nm.get(b['who'], '?')} ({b['who']}):\n{b['text']}")
+        print('Now write your FINAL position: where you agree, where you disagree (with a reason), and ONE shared plan in numbered '
+              "steps. End with 'AGREE: <ID of the post whose plan you follow>' or 'OWN PLAN'.")
+    print(f"POST: {CMD} council {who} 'text' (200 to 3000 characters), then: next {who}")
+
+
+def council(who, *text):
+    text = ' '.join(text).strip()[:3000]
+    if len(text) < 200:
+        raise Error("usage: council ID 'text' (at least 200 characters: cause, smallest way, traps, proof)")
+    with state() as s:
+        heartbeat(s, who)
+        for k, t in s['tasks'].items():
+            c = t.get('council')
+            if c and not c['done'] and who in c['members'] and not any(b['who'] == who and b['round'] == c['round'] for b in c['posts']):
+                r = c['round']
+                c['posts'].append(dict(who=who, round=r, text=text, time=time.time()))
+                log(f'COUNCIL {k} post round {r} from {who}: {text[:120]}')
+                update_councils(s)
+                print(f'Post for council {k} (round {r}) saved. Now: next {who}')
+                return
+    raise Error('you have no open council seat')
 
 
 def assign_help(s, who):
@@ -696,8 +855,9 @@ def deliver(who):
     except Exception:
         return
     for m in new:
-        print(f"\nMESSAGE {m['nr']} from {m['from']}:\n{m['text']}\n"
-              f"Reply: {CMD} message {who} {m['from']} 'reply'. Then continue your work.")
+        hint = ('Then continue your work.' if m['from'] == 'council' else
+                f"Reply: {CMD} message {who} {m['from']} 'reply'. Then continue your work.")
+        print(f"\nMESSAGE {m['nr']} from {m['from']}:\n{m['text']}\n{hint}")
 
 
 def _log_lines(hours):
@@ -756,6 +916,11 @@ def report(hours='3'):
             by = f" by {names.get(t.get('who'), t.get('who', ''))}" if t['status'] != 'ready' else ''
             attempt = f", attempt {t['attempt']}" if t.get('attempt', 0) > 1 else ''
             print(f"  {k}: {labels[t['status']]}{by}{attempt}")
+    for k, t in tasks.items():
+        c = t.get('council')
+        if c and not c['done']:
+            print(f"  {k}: council (advice before the next attempt), round {c['round']}, {len(c['members'])} members, "
+                  f"{sum(b['round'] == c['round'] for b in c['posts'])} posts")
     if waiting:
         print('Open (free or waiting for needs): ' + ', '.join(waiting))
     if merged:
@@ -798,6 +963,10 @@ def status():
         for k, t in s['tasks'].items():
             w = t.get('who', '-')
             print(f"{k:24} {t['status']:7} {w} {names.get(w, '') if w != '-' else ''}")
+        for k, t in s['tasks'].items():
+            c = t.get('council')
+            if c and not c['done']:
+                print(f"council {k:24} round {c['round']}, members {', '.join(c['members'])}, {len(c['posts'])} posts")
         for p in s.get('proposals', []):
             if p['status'] in ('voting', 'accepted'):
                 print(f"proposal {p['nr']:<3} {p['name']:24} {p['status']:8} {len(p['yes'])} yes / {len(p['no'])} no, by {p['from']} {names.get(p['from'], '')}")
@@ -810,7 +979,7 @@ def status():
                 print(f"  {w}  {names.get(w, '(no name reported)')}")
 
 
-COMMANDS = dict(next=next_, submit=submit, reject=reject, accept=accept, ping=ping, status=status,
+COMMANDS = dict(council=council, next=next_, submit=submit, reject=reject, accept=accept, ping=ping, status=status,
                 name=set_name, ask=ask, answer=answer, answers=read_answers,
                 propose=propose, vote=vote, drop=drop,
                 message=message, post=post, done=done_talk, help=ask, report=report, history=history, roadmap=roadmap)
