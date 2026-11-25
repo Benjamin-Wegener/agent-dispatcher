@@ -26,6 +26,13 @@ always append it: `next ID`. Never get a second one.
 On long work run `ping ID` at least every 15 minutes, otherwise the task is handed to someone else
 after 30 minutes (your uncommitted work is saved to a branch first).
 
+**Council (advice before the next attempt):** a task rejected twice is not handed to a lone worker again. If `next` gives you a
+COUNCIL: advice only, no code, no folder, no commit. Read the brief, the rejection reasons and the last diff, then
+`council ID 'text'` (200 to 3000 characters). Round 1 you write alone: cause with evidence, smallest way in numbered steps,
+traps, proof (a test that fails before and passes after). Round 2 (arrives as a MESSAGE, then `next`): you see the other posts and
+write your final position with ONE shared plan, ending in `AGREE: <id>` or `OWN PLAN`. The next worker follows the resulting plan;
+reviewers reject a submission that departs from it.
+
 **Getting and giving help (a conversation between two):** stuck? `help ID 'concrete problem'` (same as `ask`),
 then keep working. An idle agent takes it; both of you write with `answer ID NR 'text'`, and every reply reaches
 the other side as a MESSAGE on their next command. Solved: `done ID NR`. At most 8 posts, short and concrete.

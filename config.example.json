@@ -9,6 +9,8 @@
   "lease_seconds": 1800,
   "wait_seconds": 90,
   "max_rejections": 4,
+  "council_after": 2,
+  "council_size": 3,
   "test_timeout": 1200,
   "env": {},
   "tests": [
